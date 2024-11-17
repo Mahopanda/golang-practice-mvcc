@@ -2,20 +2,19 @@
 
 ## 序列圖
 
-```sequence
+```mermaid
+sequenceDiagram
 participant Main as Main Program
 participant DB as Database
 participant Tx as Transaction
 participant Rec as Record
 participant Test as Unit Test
 
-%% == Transaction Lifecycle ==
 Test ->> Main: Test Case: Begin Transaction
 Main ->> DB: Begin()
 activate DB
 DB ->> Tx: Create Transaction Object
 DB -->> Main: Return Transaction
-
 deactivate DB
 
 Test ->> Main: Test Case: Write Data
@@ -24,7 +23,6 @@ activate Tx
 DB ->> Rec: InsertVersion(value, tx)
 Rec -->> DB: Ack
 DB -->> Main: Ack
-
 deactivate Tx
 
 Test ->> Main: Test Case: Read Data
@@ -33,7 +31,6 @@ activate Tx
 DB ->> Rec: GetVersion(ts, level)
 Rec -->> DB: Return Version
 DB -->> Main: Return Value
-
 deactivate Tx
 
 Test ->> Main: Test Case: Commit Transaction
@@ -42,7 +39,6 @@ activate DB
 DB ->> Rec: CommitVersion(tx)
 Rec -->> DB: Ack
 DB -->> Main: Ack
-
 deactivate DB
 
 Test ->> Main: Test Case: Cleanup Old Versions
@@ -51,40 +47,33 @@ activate DB
 DB ->> Rec: CleanupVersions(oldestActiveTS)
 Rec -->> DB: Ack
 DB -->> Main: Completed
-
 deactivate DB
 
-%% == Concurrent Transactions ==
 Test ->> Main: Test Case: Concurrent Transactions
 par Transaction 1
     Main ->> DB: Begin()
     activate DB
     DB ->> Tx: Create Transaction Object
     DB -->> Main: Return Transaction
-
     Main ->> DB: Write(tx, key, value1)
     DB ->> Rec: InsertVersion(value1, tx)
     Rec -->> DB: Ack
     DB -->> Main: Ack
-
     Main ->> DB: Commit(tx)
     DB ->> Rec: CommitVersion(tx)
     Rec -->> DB: Ack
     DB -->> Main: Ack
     deactivate DB
 end
-
 par Transaction 2
     Main ->> DB: Begin()
     activate DB
     DB ->> Tx: Create Transaction Object
     DB -->> Main: Return Transaction
-
     Main ->> DB: Write(tx, key, value2)
     DB ->> Rec: InsertVersion(value2, tx)
     Rec -->> DB: Ack
     DB -->> Main: Ack
-
     Main ->> DB: Commit(tx)
     DB ->> Rec: CommitVersion(tx)
     Rec -->> DB: Ack
@@ -98,13 +87,12 @@ DB ->> Rec: GetVersion(ts, level)
 Rec -->> DB: Return Latest Version
 DB -->> Main: Return Value
 
-%% == Garbage Collection ==
 Test ->> Main: Test Case: Garbage Collection
 Main ->> DB: CleanupOldVersions()
 activate DB
 DB ->> Rec: CleanupVersions(oldestActiveTS)
 Rec -->> DB: Cleanup Completed
 DB -->> Main: Completed
-
 deactivate DB
+
 ```
