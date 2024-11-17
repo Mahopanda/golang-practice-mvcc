@@ -1,110 +1,64 @@
 package mvcc
 
 import (
-	"errors"
 	"sync"
 )
 
-// Version 定義數據版本
-type Version struct {
-	Value     string
-	Timestamp int
-	EndTS     int
-	Committed bool
-}
-
-// Record 定義數據記錄
 type Record struct {
-	mu       sync.RWMutex
-	Versions []*Version // 改為公開，方便測試
+	mu           sync.RWMutex
+	versionChain *VersionChain
 }
 
 func NewRecord() *Record {
 	return &Record{
-		Versions: make([]*Version, 0),
+		versionChain: NewVersionChain(),
 	}
 }
 
-// InsertVersion 插入新版本
-func (r *Record) InsertVersion(value string, ts int, committed bool) error {
+func (r *Record) InsertVersion(value string, ts int, txID int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// 檢查時間戳衝突
-	for _, v := range r.Versions {
-		if v.Timestamp == ts {
-			return errors.New("version timestamp conflict")
-		}
-	}
-
-	// 為上一個版本設置結束時間戳
-	if len(r.Versions) > 0 {
-		r.Versions[len(r.Versions)-1].EndTS = ts
-	}
-
-	r.Versions = append(r.Versions, &Version{
+	version := &Version{
 		Value:     value,
 		Timestamp: ts,
-		EndTS:     0,
-		Committed: committed,
-	})
+		TxID:      txID,
+		Committed: false,
+	}
+
+	r.versionChain.AddVersion(version)
 	return nil
 }
 
-// CommitVersion 提交指定時間戳的版本
-func (r *Record) CommitVersion(ts int) error {
+func (r *Record) GetVersion(ts int, isolationLevel IsolationLevel) (*Version, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.versionChain.GetVersion(ts, isolationLevel)
+}
+
+func (r *Record) CommitVersion(txID int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for _, v := range r.Versions {
-		if v.Timestamp == ts {
+	versions := r.versionChain.GetVersions()
+	for _, v := range versions {
+		if v.TxID == txID && !v.Committed {
 			v.Committed = true
 			return nil
 		}
 	}
-	return errors.New("version not found")
+	return ErrVersionNotFound
 }
 
-// GetVersion 獲取指定時間戳的版本
-func (r *Record) GetVersion(ts int) (*Version, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var latest *Version
-	for _, v := range r.Versions {
-		if v.Timestamp <= ts && v.Committed {
-			if latest == nil || v.Timestamp > latest.Timestamp {
-				latest = v
-			}
-		}
-	}
-	if latest == nil {
-		return nil, errors.New("no valid version found")
-	}
-	return latest, nil
-}
-
-// CleanupVersions 清理舊版本
-func (r *Record) CleanupVersions() {
+func (r *Record) CleanupVersions(oldestActiveTS int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if len(r.Versions) <= 1 {
-		return
-	}
-
-	// 只保留最新的已提交版本
-	var latest *Version
-	for _, v := range r.Versions {
-		if v.Committed {
-			if latest == nil || v.Timestamp > latest.Timestamp {
-				latest = v
-			}
-		}
-	}
-
-	if latest != nil {
-		r.Versions = []*Version{latest}
-	}
+	r.versionChain.CleanupVersions(oldestActiveTS)
 }
 
+// GetVersions returns all versions (for testing)
+func (r *Record) GetVersions() []*Version {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.versionChain.GetVersions()
+}

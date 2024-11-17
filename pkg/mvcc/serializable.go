@@ -35,18 +35,13 @@ func (s *SerializableLock) UnlockRange(key string) {
 	delete(s.locks, key)
 }
 
-// GetVersions returns the versions of the record for testing purposes.
-func (r *Record) GetVersions() []*Version {
-	return r.Versions
-}
-
 func (r *Record) GetAllVersions() []*Version {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	result := []*Version{}
-	for _, version := range r.Versions {
-		result = append(result, version)	
+	for _, version := range r.versionChain.versions {
+		result = append(result, version)
 	}
 	return result
 }
