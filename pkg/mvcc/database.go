@@ -8,10 +8,11 @@ import (
 
 // Database 定義MVCC數據庫
 type Database struct {
-	data      map[string]*Record
-	currentTS int
-	mu        sync.RWMutex
-	txManager *TransactionManager
+	data        map[string]*Record
+	currentTS   int
+	mu          sync.RWMutex
+	txManager   *TransactionManager
+	lockManager *LockManager
 }
 
 // 新增事務管理器
@@ -23,8 +24,9 @@ type TransactionManager struct {
 // NewDatabase 創建新數據庫實例
 func NewDatabase() *Database {
 	return &Database{
-		data:      make(map[string]*Record),
-		txManager: NewTransactionManager(),
+		data:        make(map[string]*Record),
+		txManager:   NewTransactionManager(),
+		lockManager: NewLockManager(),
 	}
 }
 
@@ -66,21 +68,28 @@ func (db *Database) Write(tx *Transaction, key, value string) error {
 
 // Commit 提交事務
 func (db *Database) Commit(tx *Transaction) error {
-	// 第一階段：準備
+	// First phase: Prepare
 	if err := db.prepare(tx); err != nil {
 		return db.Rollback(tx)
 	}
 
-	// 第二階段：提交
+	// Second phase: Commit
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	// 更新寫入版本的時間戳和提交狀態
+	// Commit changes for keys in WriteSet
 	for key := range tx.WriteSet {
 		record := db.data[key]
 		if err := record.CommitVersion(tx.ID); err != nil {
 			return db.Rollback(tx)
 		}
+		// Release write lock for this key
+		db.lockManager.ReleaseLock(tx.ID, key)
+	}
+
+	// Release read locks for keys in ReadSet
+	for key := range tx.ReadSet {
+		db.lockManager.ReleaseLock(tx.ID, key)
 	}
 
 	tx.Status = Committed
@@ -181,7 +190,9 @@ func (db *Database) Rollback(tx *Transaction) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	for _, record := range db.data {
+	// Undo changes for the keys in WriteSet
+	for key := range tx.WriteSet {
+		record := db.data[key]
 		record.mu.Lock()
 		newVersions := make([]*Version, 0)
 		for _, v := range record.versionChain.versions {
@@ -191,7 +202,15 @@ func (db *Database) Rollback(tx *Transaction) error {
 		}
 		record.versionChain.versions = newVersions
 		record.mu.Unlock()
+		// Release write lock for this key
+		db.lockManager.ReleaseLock(tx.ID, key)
 	}
+
+	// Release read locks for the keys in ReadSet
+	for key := range tx.ReadSet {
+		db.lockManager.ReleaseLock(tx.ID, key)
+	}
+
 	return nil
 }
 
@@ -200,7 +219,7 @@ func (db *Database) acquireLock(tx *Transaction, key string, lockType LockType) 
 	if tx.IsolationLevel == Serializable {
 		return nil
 	}
-	return nil
+	return db.lockManager.AcquireLock(tx.ID, key, lockType)
 }
 
 // 添加驗證事務的方法
